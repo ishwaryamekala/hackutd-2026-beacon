@@ -43,8 +43,15 @@ async function main() {
   // One queue per conversation: replies stay in order without blocking others.
   const queues = new Map<string, Promise<void>>();
 
+  // After a dropped connection the stream can redeliver messages it already
+  // sent; never answer the same message twice.
+  const seen = new Set<string>();
+
   for await (const [space, message] of app.messages) {
     if (message.direction !== "inbound") continue;
+    if (seen.has(message.id)) continue;
+    seen.add(message.id);
+    if (seen.size > 5_000) seen.clear();
     const c: any = message.content;
     const list: any[] = c?.type === "group" ? (c.items ?? []).map((m: any) => m.content) : [c];
     const text = list.filter((p) => p?.type === "text").map((p) => p.text).join("\n");
