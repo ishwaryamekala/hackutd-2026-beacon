@@ -57,7 +57,7 @@ opens the site, and the secret key bypasses all security.
 1. Open Terminal and go to the beacon folder:
 
    ```bash
-   cd "/Users/ishwaryamekala/Desktop/claude code/beacon"
+   cd beacon
    ```
 
 2. If there is no `.env` file yet, make one from the template:
