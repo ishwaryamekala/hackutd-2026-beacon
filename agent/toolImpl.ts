@@ -107,6 +107,9 @@ export async function find_accessible_route(args: {
   if (!fromId || !toId) {
     return { error: "unknown_location", from: args.from, to: args.to };
   }
+  // "student memorial fountain" can fuzzy-match "Student Union". If both ends
+  // land on the same spot, we don't actually know the destination.
+  if (fromId === toId) return { error: "same_place", from: args.from, to: args.to };
 
   const prefs: Preferences = {
     ...DEFAULT_PREFS,

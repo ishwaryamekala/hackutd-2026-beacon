@@ -58,7 +58,14 @@ const KIND_TEXT: Record<Obstacle["kind"], string> = {
 
 const histories = new Map<string, Msg[]>();          // subscriber/space -> model history
 const pendingPhotos = new Map<string, string>();
-const origins = new Map<string, string>();           // subscriber -> where they said they are      // subscriber -> photo URL awaiting a location
+const origins = new Map<string, string>();
+const helped = new Set<string>();                    // people who've seen the full welcome
+
+/** Full welcome the first time; after that, a short nudge instead of repeating it. */
+function helpOnce(key: string) {
+  if (!helped.has(key)) { helped.add(key); return HELP; }
+  return "Sorry, I didn't catch that. Try \"route from the Union to the library\", tell me about a problem like \"the library ramp is blocked\", or text HELP.";
+}           // subscriber -> where they said they are      // subscriber -> photo URL awaiting a location
 const lastNudge = new Map<string, number>();          // subscriber -> last unsolicited text (ms)
 const NUDGE_GAP_MS = 10 * 60_000;                     // "elevate the moment without demanding attention"
 
@@ -115,11 +122,17 @@ async function fallbackReply(text: string, ctx: ToolContext, key = ""): Promise<
   let from: string | undefined, to: string | undefined;
   const fromTo = text.match(/from\s+(.+?)\s+to\s+(.+)/i);
   const bare = text.match(/^(.+?)\s+to\s+(.+)$/i);
-  const toOnly = text.match(/\b(?:to|get to|go to|going to|take me to|directions to|route to|need to get to|heading to)\s+(?:the\s+)?(.+)$/i);
+  const toOnly = text.match(/\b(?:to|get to|getting to|go to|going to|take me to|directions to|route to|need to get to|heading to|how do i get to)\s+(?:the\s+)?(.+)$/i);
   if (fromTo && known(fromTo[1]) && known(fromTo[2])) [from, to] = [fromTo[1], clean(fromTo[2])];
   else if (bare && known(bare[1]) && known(bare[2])) [from, to] = [bare[1], clean(bare[2])];
   else if (toOnly && known(toOnly[1]) && !(here && toOnly.index! < here.index!)) [from, to] = [origins.get(key) ?? "", clean(toOnly[1])];
   else if (!here && known(text) && origins.has(key)) [from, to] = [origins.get(key)!, clean(text)];
+
+  const notOnMap = (p: string) =>
+    `I don't have "${clean(p)}" on my map yet. I'm still learning campus 🗺️ Right now I cover the Student Union, ` +
+    "the Plinth, McDermott Library, JSOM and ECSW. Want a route to one of those?";
+  if (!to && toOnly && !known(toOnly[1])) return notOnMap(toOnly[1]);
+  if (!to && fromTo && known(fromTo[1]) && !known(fromTo[2])) return notOnMap(fromTo[2]);
 
   if (to && !from) {
     return `Happy to help you get to ${to}. Where are you starting from? (e.g. "I'm at the Student Union")`;
@@ -129,17 +142,19 @@ async function fallbackReply(text: string, ctx: ToolContext, key = ""): Promise<
       return `Got it, you're at ${place(resolve_location({ phrase: here[1] }).candidates[0].id)} 📍 Where do you want to go?\n` +
         "A few step-free spots nearby: McDermott Library, JSOM, the ECSW building.";
     }
-    if (text.split(/\s+/).length <= 4 && !/^(hi|hey|hello|thanks|thank you|ok|okay)\b/i.test(text)) {
+    const placey = /\b(hall|building|bldg|dorm|dorms|center|centre|library|fountain|garage|lot|gym|rec|cafe|commons|residence|apartments?|plaza|lab|ate|ssb|jo|ecs[sw]?|founders|green|union|parking)\b/i;
+    if (text.split(/\s+/).length <= 4 && (placey.test(text) || origins.has(key))) {
       return `I don't have "${clean(text)}" on my map yet. I'm still learning campus 🗺️ Right now I cover the Student Union, ` +
         "the Plinth, McDermott Library, JSOM and ECSW. Want a route to one of those?";
     }
     if (/idk|don'?t know|not sure|lost|where (should|do) i/i.test(text)) {
       return "No worries! Tell me where you are (e.g. \"I'm at the Student Union\") and where you're headed, and I'll find a step-free way.";
     }
-    return HELP;
+    return helpOnce(key);
   }
 
   const r: any = await find_accessible_route({ from, to });
+  if (r.error === "same_place") return notOnMap(to);
   if (r.error) return `I couldn't find "${r.error === "unknown_location" ? to : from}" on my map yet. Try a building name like "library" or "JSOM".`;
   if (!r.ok) return `I don't see a step-free way from ${r.from} to ${r.to} right now. Every known path needs stairs or is blocked by a verified report.`;
   origins.set(key, to); // after arriving, "now the union" starts from here
@@ -214,8 +229,10 @@ export async function respond(inc: Incoming): Promise<string> {
     reply = "Got your photo 📸 Where is this, and what's wrong? (e.g. \"library ramp, blocked\")";
   } else if (!text) {
     reply = HELP;
-  } else if (/^(hi|hey|hello|help|start over|menu)\b/i.test(text) && text.length < 24) {
-    reply = HELP;
+  } else if (/^help\b/i.test(text)) {
+    helped.add(key); reply = HELP;
+  } else if (/^(hi|hey|hello|start over|menu)\b/i.test(text) && text.length < 24) {
+    reply = helpOnce(key);
   } else {
     // 5. Everything else goes to Beau (Nemotron + tools), with a rule-based net.
     reply = await think(key, text, ctx);
